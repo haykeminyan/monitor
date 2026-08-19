@@ -74,7 +74,7 @@ async def monitor():
 async def main(request: Request):
     return templates.TemplateResponse(
         request=request,
-        name="monitor.html",
+        name="index.html",
         context={}
     )
 

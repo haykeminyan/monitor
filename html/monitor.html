@@ -143,7 +143,7 @@
   .card-badge.pending{ color:var(--pending); background:var(--pending-dim); }
 
   .card-code{
-    font-family:var(--font-display); font-size:18px; letter-spacing:0.03em; margin:14px 0 2px;
+    font-family:var(--font-display); font-size:28px; margin:14px 0 2px;
     color:var(--text);
   }
   .card-code.bad{ color:var(--down); }
@@ -210,7 +210,7 @@
 
   <div class="topbar">
     <div class="topbar-row">
-      <div class="prompt"><span class="path">haykeminyan@ops</span>:<span class="cmd">~$</span> system_status --watch<span class="cursor"></span></div>
+      <div class="prompt"><span class="path">haykeminyan@projects</span>:<span class="cmd">~$</span> system_status --watch<span class="cursor"></span></div>
       <div class="clock" id="clock">--:--:-- UTC</div>
     </div>
     <div class="status-pill pending" id="overallPill">
@@ -242,23 +242,23 @@
 
 <script>
 (function(){
-  var PROJECTS = [
-    { url: "https://baregorc.com/",          name: "baregorc.com" },
-    { url: "https://travelculturehub.com/",  name: "travelculturehub.com" },
-    { url: "https://www.shoplux.casa/",      name: "shoplux.casa" }
+  var KNOWN_PROJECTS = [
+    "https://baregorc.com/",
+    "https://travelculturehub.com/",
+    "https://www.shoplux.casa/"
   ];
-  var TIMEOUT_MS = 8000;
   var POLL_MS = 60000;
   var HISTORY_LEN = 20;
   var MAX_LOG_LINES = 200;
 
   var state = {
-    history: {},   // project url -> array of {ok, time}
+    endpoint: "/api",
+    history: {},   // project -> array of {ok, code, time}
     countdown: POLL_MS / 1000,
     inFlight: false
   };
 
-  PROJECTS.forEach(function(p){ state.history[p.url] = []; });
+  KNOWN_PROJECTS.forEach(function(p){ state.history[p] = []; });
 
   var elGrid       = document.getElementById('cardsGrid');
   var elLog         = document.getElementById('logBody');
@@ -294,29 +294,31 @@
     var byProject = {};
     (results || []).forEach(function(r){ byProject[r.project] = r; });
 
+    var projects = (results && results.length) ? results.map(function(r){ return r.project; }) : KNOWN_PROJECTS;
+
     elGrid.innerHTML = '';
-    PROJECTS.forEach(function(p){
-      var r = byProject[p.url];
+    projects.forEach(function(project){
+      var r = byProject[project];
+      var ok = !!r && r.status_code >= 200 && r.status_code < 400 && !r.error;
       var known = !!r;
-      var ok = known && r.ok;
       var cls = !known ? 'pending' : (ok ? 'ok' : 'bad');
 
       var card = document.createElement('div');
       card.className = 'card ' + cls;
 
-      var codeText = !known ? '···' : (ok ? 'REACHABLE' : 'UNREACHABLE');
+      var codeText = known ? (r.status_code != null ? r.status_code : 'ERR') : '···';
 
-      var hist = state.history[p.url] || [];
+      var hist = state.history[project] || [];
       var histHtml = '';
       var padded = HISTORY_LEN - hist.length;
       for(var i=0;i<padded;i++) histHtml += '<div class="tick empty" title="no data"></div>';
       hist.forEach(function(h){
-        histHtml += '<div class="tick '+(h.ok?'ok':'bad')+'" title="'+fmtTime(h.time)+' — '+(h.ok?'reachable':'unreachable')+'"></div>';
+        histHtml += '<div class="tick '+(h.ok?'ok':'bad')+'" title="'+fmtTime(h.time)+' — '+(h.ok?'OK':'FAIL')+' '+h.code+'"></div>';
       });
 
       card.innerHTML =
         '<div class="card-top">'+
-          '<div class="card-name">'+p.name+'</div>'+
+          '<div class="card-name">'+shortName(project)+'</div>'+
           '<div class="card-badge '+cls+'">'+(!known?'pending':(ok?'up':'down'))+'</div>'+
         '</div>'+
         '<div class="card-code '+cls+'">'+codeText+'</div>'+
@@ -356,7 +358,7 @@
       return;
     }
     var upCount = results.filter(function(r){
-      return r.ok;
+      return r.status_code >= 200 && r.status_code < 400 && !r.error;
     }).length;
     var total = results.length;
     if(upCount === total){
@@ -377,53 +379,51 @@
     elBanner.classList.add('show');
   }
 
-  function pingProject(p){
-    var controller = new AbortController();
-    var timeoutId = setTimeout(function(){ controller.abort(); }, TIMEOUT_MS);
-
-    // mode:'no-cors' is required to even fire a cross-origin request from a
-    // static page with no backend. Trade-off: the browser hides the real
-    // response (opaque), so we can only tell "reached the server" from
-    // "network/DNS/timeout failure" — not real HTTP status codes.
-    return fetch(p.url, { method:'GET', mode:'no-cors', cache:'no-store', signal:controller.signal })
-      .then(function(){
-        clearTimeout(timeoutId);
-        return { project:p.url, ok:true, current_time:new Date().toISOString(), error:null };
-      })
-      .catch(function(err){
-        clearTimeout(timeoutId);
-        var msg = (err && err.name === 'AbortError') ? 'timeout after '+(TIMEOUT_MS/1000)+'s' : (err.message || 'network error');
-        return { project:p.url, ok:false, current_time:new Date().toISOString(), error:msg };
-      });
-  }
-
   function runCheck(){
     if(state.inFlight) return;
     state.inFlight = true;
     var startedAt = performance.now();
     var nowLabel = new Date().toISOString().substr(11,8);
 
-    Promise.all(PROJECTS.map(pingProject)).then(function(results){
-      var elapsed = Math.round(performance.now() - startedAt);
+    fetch(state.endpoint, { method:'GET', cache:'no-store' })
+      .then(function(resp){
+        if(!resp.ok){
+          throw new Error('HTTP '+resp.status+' from '+state.endpoint);
+        }
+        return resp.json();
+      })
+      .then(function(data){
+        var results = Array.isArray(data) ? data : (data.results || []);
+        var elapsed = Math.round(performance.now() - startedAt);
 
-      results.forEach(function(r){
-        if(!state.history[r.project]) state.history[r.project] = [];
-        state.history[r.project].push({ ok:r.ok, time:r.current_time });
-        if(state.history[r.project].length > HISTORY_LEN) state.history[r.project].shift();
+        results.forEach(function(r){
+          if(!state.history[r.project]) state.history[r.project] = [];
+          var ok = r.status_code >= 200 && r.status_code < 400 && !r.error;
+          state.history[r.project].push({ ok:ok, code:(r.status_code!=null?r.status_code:'ERR'), time:r.current_time });
+          if(state.history[r.project].length > HISTORY_LEN) state.history[r.project].shift();
 
-        var cls = r.ok ? 'ok' : 'bad';
-        pushLog('<span class="t">'+nowLabel+'</span>  GET  '+shortName(r.project).padEnd(24,' ')+
-                '  <span class="'+cls+'">'+(r.ok ? 'REACHABLE' : 'UNREACHABLE')+'</span>' +
-                (r.error ? ('  '+escapeHtml(r.error)) : ''));
+          var cls = ok ? 'ok' : 'bad';
+          pushLog('<span class="t">'+nowLabel+'</span>  GET  '+shortName(r.project).padEnd(24,' ')+
+                  '  <span class="'+cls+'">'+(r.status_code!=null?r.status_code:'ERR')+'</span>  '+
+                  '<span class="'+cls+'">'+(ok?'OK':'FAIL')+'</span>' +
+                  (r.error ? ('  '+escapeHtml(r.error)) : ''));
+        });
+
+        renderCards(results);
+        updateOverall(results);
+        showBanner(null);
+        elSweepInfo.textContent = 'sweep completed in '+elapsed+'ms';
+      })
+      .catch(function(err){
+        pushLog('<span class="t">'+nowLabel+'</span>  <span class="sys">SYSTEM</span>  failed to fetch data — '+escapeHtml(err.message));
+        showBanner('Could not reach "'+state.endpoint+'". Check the endpoint address and CORS on the server (see hint above).');
+        elOverallPill.className = 'status-pill bad';
+        elOverallText.textContent = 'connection error';
+      })
+      .finally(function(){
+        state.inFlight = false;
+        state.countdown = POLL_MS / 1000;
       });
-
-      renderCards(results);
-      updateOverall(results);
-      showBanner(null);
-      elSweepInfo.textContent = 'sweep completed in '+elapsed+'ms';
-      state.inFlight = false;
-      state.countdown = POLL_MS / 1000;
-    });
   }
 
   // countdown / clock ticking

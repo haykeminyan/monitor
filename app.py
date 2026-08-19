@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI):
         pass
 app = FastAPI(lifespan=lifespan)
 
-templates = Jinja2Templates(directory=".")
+templates = Jinja2Templates(directory="html")
 
 monitor_data = []
 
@@ -74,7 +74,7 @@ async def monitor():
 async def main(request: Request):
     return templates.TemplateResponse(
         request=request,
-        name="index.html",
+        name="monitor.html",
         context={}
     )
 

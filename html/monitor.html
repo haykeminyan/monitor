@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>system_status --watch</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap');
+
+  :root{
+    --bg:            #0a0d0a;
+    --bg-raised:     #0f130f;
+    --panel:         #11150f;
+    --border:        #1e281c;
+    --border-bright: #2c3a28;
+    --text:          #d9f5d6;
+    --text-dim:      #7f9c7a;
+    --muted:         #566b52;
+    --up:            #39ff6a;
+    --up-dim:        rgba(57,255,106,0.14);
+    --down:          #ff5c5c;
+    --down-dim:      rgba(255,92,92,0.14);
+    --pending:       #ffc85c;
+    --pending-dim:   rgba(255,200,92,0.14);
+    --font-display:  'Space Mono', monospace;
+    --font-body:     'JetBrains Mono', monospace;
+  }
+
+  *{ box-sizing:border-box; }
+
+  html,body{
+    margin:0; padding:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--font-body);
+    min-height:100vh;
+  }
+
+  body{
+    background-image:
+      radial-gradient(ellipse at top left, rgba(57,255,106,0.05), transparent 55%),
+      radial-gradient(ellipse at bottom right, rgba(57,255,106,0.035), transparent 55%);
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ animation-duration:0.01ms !important; animation-iteration-count:1 !important; transition-duration:0.01ms !important; }
+  }
+
+  .wrap{
+    max-width:1040px;
+    margin:0 auto;
+    padding:28px 20px 60px;
+  }
+
+  /* ---------- TOPBAR ---------- */
+  .topbar{
+    border:1px solid var(--border);
+    background:var(--panel);
+    border-radius:6px;
+    padding:16px 20px;
+    margin-bottom:22px;
+  }
+  .topbar-row{
+    display:flex; align-items:center; justify-content:space-between;
+    flex-wrap:wrap; gap:10px;
+  }
+  .prompt{
+    font-family:var(--font-display);
+    font-size:15px; letter-spacing:0.02em;
+    color:var(--text);
+  }
+  .prompt .path{ color:var(--muted); }
+  .prompt .cmd{ color:var(--up); }
+  .cursor{
+    display:inline-block; width:8px; height:15px; background:var(--up);
+    margin-left:2px; vertical-align:-2px;
+    animation:blink 1s steps(1) infinite;
+  }
+  @keyframes blink{ 50%{ opacity:0; } }
+
+  .clock{
+    font-size:13px; color:var(--text-dim); letter-spacing:0.03em;
+    font-variant-numeric:tabular-nums;
+  }
+
+  .status-pill{
+    display:inline-flex; align-items:center; gap:8px;
+    font-size:12px; letter-spacing:0.08em; text-transform:uppercase;
+    padding:6px 12px; border-radius:100px;
+    border:1px solid var(--border-bright);
+    margin-top:12px;
+  }
+  .status-pill .dot{
+    width:8px; height:8px; border-radius:50%;
+    box-shadow:0 0 8px currentColor;
+    animation:pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse{ 0%,100%{ opacity:1; } 50%{ opacity:0.45; } }
+  .status-pill.ok{ color:var(--up); background:var(--up-dim); border-color:rgba(57,255,106,0.3); }
+  .status-pill.bad{ color:var(--down); background:var(--down-dim); border-color:rgba(255,92,92,0.3); }
+  .status-pill.pending{ color:var(--pending); background:var(--pending-dim); border-color:rgba(255,200,92,0.3); }
+
+  /* ---------- GRID OF CARDS ---------- */
+  .grid{
+    display:grid;
+    grid-template-columns:repeat(3, 1fr);
+    gap:14px;
+    margin-bottom:22px;
+  }
+  @media (max-width:760px){ .grid{ grid-template-columns:1fr; } }
+
+  .card{
+    border:1px solid var(--border);
+    background:var(--panel);
+    border-radius:6px;
+    padding:16px 16px 14px;
+    position:relative;
+    overflow:hidden;
+    transition:border-color 0.2s ease;
+  }
+  .card.ok{ border-color:rgba(57,255,106,0.22); }
+  .card.bad{ border-color:rgba(255,92,92,0.3); }
+  .card::before{
+    content:"";
+    position:absolute; top:0; left:0; right:0; height:2px;
+    background:var(--muted);
+  }
+  .card.ok::before{ background:var(--up); box-shadow:0 0 10px var(--up); }
+  .card.bad::before{ background:var(--down); box-shadow:0 0 10px var(--down); }
+  .card.pending::before{ background:var(--pending); }
+
+  .card-top{ display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
+  .card-name{
+    font-family:var(--font-display); font-size:14px; color:var(--text);
+    word-break:break-all;
+  }
+  .card-badge{
+    font-size:10.5px; letter-spacing:0.08em; text-transform:uppercase;
+    padding:3px 8px; border-radius:3px; white-space:nowrap;
+  }
+  .card-badge.ok{ color:var(--up); background:var(--up-dim); }
+  .card-badge.bad{ color:var(--down); background:var(--down-dim); }
+  .card-badge.pending{ color:var(--pending); background:var(--pending-dim); }
+
+  .card-code{
+    font-family:var(--font-display); font-size:28px; margin:14px 0 2px;
+    color:var(--text);
+  }
+  .card-code.bad{ color:var(--down); }
+  .card-code.ok{ color:var(--up); }
+  .card-meta{ font-size:11px; color:var(--muted); }
+  .card-meta .err{ color:var(--down); }
+
+  .history{
+    display:flex; gap:3px; margin-top:14px;
+  }
+  .history .tick{
+    flex:1; height:16px; border-radius:2px; background:var(--border);
+  }
+  .history .tick.ok{ background:var(--up); opacity:0.85; }
+  .history .tick.bad{ background:var(--down); opacity:0.9; }
+  .history .tick.empty{ background:var(--border); opacity:0.4; }
+
+  /* ---------- LOG PANEL ---------- */
+  .log-panel{
+    border:1px solid var(--border);
+    background:#080a08;
+    border-radius:6px;
+    overflow:hidden;
+  }
+  .log-header{
+    padding:10px 16px; border-bottom:1px solid var(--border);
+    font-size:12px; color:var(--text-dim); letter-spacing:0.03em;
+    display:flex; justify-content:space-between; align-items:center;
+    background:var(--panel);
+  }
+  .log-header .sweep{ color:var(--muted); font-size:11px; }
+  .log-body{
+    height:230px; overflow-y:auto;
+    padding:10px 16px; font-size:12px; line-height:1.9;
+  }
+  .log-body::-webkit-scrollbar{ width:8px; }
+  .log-body::-webkit-scrollbar-thumb{ background:var(--border-bright); border-radius:4px; }
+  .log-line{ white-space:pre; color:var(--text-dim); }
+  .log-line .t{ color:var(--muted); }
+  .log-line .ok{ color:var(--up); }
+  .log-line .bad{ color:var(--down); }
+  .log-line .sys{ color:var(--pending); }
+  .log-empty{ color:var(--muted); }
+
+  /* ---------- FOOTER ---------- */
+  .footer{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-top:16px; flex-wrap:wrap; gap:10px;
+  }
+  .countdown{ font-size:12px; color:var(--muted); }
+  .countdown b{ color:var(--text-dim); font-variant-numeric:tabular-nums; }
+
+  .banner{
+    display:none;
+    border:1px solid rgba(255,92,92,0.35); background:var(--down-dim);
+    color:var(--down); font-size:12px; padding:10px 14px; border-radius:5px;
+    margin-bottom:16px; line-height:1.6;
+  }
+  .banner.show{ display:block; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="topbar-row">
+      <div class="prompt"><span class="path">haykeminyan@projects</span>:<span class="cmd">~$</span> system_status --watch<span class="cursor"></span></div>
+      <div class="clock" id="clock">--:--:-- UTC</div>
+    </div>
+    <div class="status-pill pending" id="overallPill">
+      <span class="dot"></span><span id="overallText">initializing</span>
+    </div>
+
+  </div>
+
+  <div class="banner" id="errorBanner"></div>
+
+  <div class="grid" id="cardsGrid"></div>
+
+  <div class="log-panel">
+    <div class="log-header">
+      <span>$ tail -f /var/log/monitor.log</span>
+      <span class="sweep" id="sweepInfo">waiting for first sweep</span>
+    </div>
+    <div class="log-body" id="logBody">
+      <div class="log-line log-empty">// log is empty, waiting for first sweep...</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="countdown">next check in <b id="countdownVal">60</b>s</div>
+    <div class="countdown">interval: 60s · history: last 20 checks</div>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  var KNOWN_PROJECTS = [
+    "https://baregorc.com/",
+    "https://travelculturehub.com/",
+    "https://www.shoplux.casa/"
+  ];
+  var POLL_MS = 60000;
+  var HISTORY_LEN = 20;
+  var MAX_LOG_LINES = 200;
+
+  var state = {
+    endpoint: "/api",
+    history: {},   // project -> array of {ok, code, time}
+    countdown: POLL_MS / 1000,
+    inFlight: false
+  };
+
+  KNOWN_PROJECTS.forEach(function(p){ state.history[p] = []; });
+
+  var elGrid       = document.getElementById('cardsGrid');
+  var elLog         = document.getElementById('logBody');
+  var elClock       = document.getElementById('clock');
+  var elOverallPill = document.getElementById('overallPill');
+  var elOverallText = document.getElementById('overallText');
+  var elCountdown   = document.getElementById('countdownVal');
+  var elSweepInfo   = document.getElementById('sweepInfo');
+  var elBanner      = document.getElementById('errorBanner');
+
+  function shortName(url){
+    try{
+      var u = new URL(url);
+      return u.hostname.replace(/^www\./, '');
+    }catch(e){ return url; }
+  }
+
+  function fmtTime(iso){
+    if(!iso) return '—';
+    var d = new Date(iso);
+    if(isNaN(d.getTime())) return iso;
+    return d.toISOString().substr(11,8) + ' UTC';
+  }
+
+  function pad(n){ return n < 10 ? '0'+n : ''+n; }
+
+  function tickClock(){
+    var d = new Date();
+    elClock.textContent = pad(d.getUTCHours())+':'+pad(d.getUTCMinutes())+':'+pad(d.getUTCSeconds())+' UTC';
+  }
+
+  function renderCards(results){
+    var byProject = {};
+    (results || []).forEach(function(r){ byProject[r.project] = r; });
+
+    var projects = (results && results.length) ? results.map(function(r){ return r.project; }) : KNOWN_PROJECTS;
+
+    elGrid.innerHTML = '';
+    projects.forEach(function(project){
+      var r = byProject[project];
+      var ok = !!r && r.status_code >= 200 && r.status_code < 400 && !r.error;
+      var known = !!r;
+      var cls = !known ? 'pending' : (ok ? 'ok' : 'bad');
+
+      var card = document.createElement('div');
+      card.className = 'card ' + cls;
+
+      var codeText = known ? (r.status_code != null ? r.status_code : 'ERR') : '···';
+
+      var hist = state.history[project] || [];
+      var histHtml = '';
+      var padded = HISTORY_LEN - hist.length;
+      for(var i=0;i<padded;i++) histHtml += '<div class="tick empty" title="no data"></div>';
+      hist.forEach(function(h){
+        histHtml += '<div class="tick '+(h.ok?'ok':'bad')+'" title="'+fmtTime(h.time)+' — '+(h.ok?'OK':'FAIL')+' '+h.code+'"></div>';
+      });
+
+      card.innerHTML =
+        '<div class="card-top">'+
+          '<div class="card-name">'+shortName(project)+'</div>'+
+          '<div class="card-badge '+cls+'">'+(!known?'pending':(ok?'up':'down'))+'</div>'+
+        '</div>'+
+        '<div class="card-code '+cls+'">'+codeText+'</div>'+
+        '<div class="card-meta">'+
+          (known ? ('checked: '+fmtTime(r.current_time)) : 'not checked yet') +
+          (known && r.error ? ('<br><span class="err">'+escapeHtml(r.error)+'</span>') : '') +
+        '</div>'+
+        '<div class="history">'+histHtml+'</div>';
+
+      elGrid.appendChild(card);
+    });
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, function(c){
+      return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+    });
+  }
+
+  function pushLog(html){
+    var wasEmpty = elLog.querySelector('.log-empty');
+    if(wasEmpty) elLog.innerHTML = '';
+    var line = document.createElement('div');
+    line.className = 'log-line';
+    line.innerHTML = html;
+    elLog.appendChild(line);
+    while(elLog.children.length > MAX_LOG_LINES){
+      elLog.removeChild(elLog.firstChild);
+    }
+    elLog.scrollTop = elLog.scrollHeight;
+  }
+
+  function updateOverall(results){
+    if(!results || !results.length){
+      elOverallPill.className = 'status-pill pending';
+      elOverallText.textContent = 'no data';
+      return;
+    }
+    var upCount = results.filter(function(r){
+      return r.status_code >= 200 && r.status_code < 400 && !r.error;
+    }).length;
+    var total = results.length;
+    if(upCount === total){
+      elOverallPill.className = 'status-pill ok';
+      elOverallText.textContent = total+'/'+total+' operational';
+    }else if(upCount === 0){
+      elOverallPill.className = 'status-pill bad';
+      elOverallText.textContent = 'all services down';
+    }else{
+      elOverallPill.className = 'status-pill bad';
+      elOverallText.textContent = upCount+'/'+total+' operational — degraded';
+    }
+  }
+
+  function showBanner(msg){
+    if(!msg){ elBanner.classList.remove('show'); elBanner.textContent = ''; return; }
+    elBanner.textContent = msg;
+    elBanner.classList.add('show');
+  }
+
+  function runCheck(){
+    if(state.inFlight) return;
+    state.inFlight = true;
+    var startedAt = performance.now();
+    var nowLabel = new Date().toISOString().substr(11,8);
+
+    fetch(state.endpoint, { method:'GET', cache:'no-store' })
+      .then(function(resp){
+        if(!resp.ok){
+          throw new Error('HTTP '+resp.status+' from '+state.endpoint);
+        }
+        return resp.json();
+      })
+      .then(function(data){
+        var results = Array.isArray(data) ? data : (data.results || []);
+        var elapsed = Math.round(performance.now() - startedAt);
+
+        results.forEach(function(r){
+          if(!state.history[r.project]) state.history[r.project] = [];
+          var ok = r.status_code >= 200 && r.status_code < 400 && !r.error;
+          state.history[r.project].push({ ok:ok, code:(r.status_code!=null?r.status_code:'ERR'), time:r.current_time });
+          if(state.history[r.project].length > HISTORY_LEN) state.history[r.project].shift();
+
+          var cls = ok ? 'ok' : 'bad';
+          pushLog('<span class="t">'+nowLabel+'</span>  GET  '+shortName(r.project).padEnd(24,' ')+
+                  '  <span class="'+cls+'">'+(r.status_code!=null?r.status_code:'ERR')+'</span>  '+
+                  '<span class="'+cls+'">'+(ok?'OK':'FAIL')+'</span>' +
+                  (r.error ? ('  '+escapeHtml(r.error)) : ''));
+        });
+
+        renderCards(results);
+        updateOverall(results);
+        showBanner(null);
+        elSweepInfo.textContent = 'sweep completed in '+elapsed+'ms';
+      })
+      .catch(function(err){
+        pushLog('<span class="t">'+nowLabel+'</span>  <span class="sys">SYSTEM</span>  failed to fetch data — '+escapeHtml(err.message));
+        showBanner('Could not reach "'+state.endpoint+'". Check the endpoint address and CORS on the server (see hint above).');
+        elOverallPill.className = 'status-pill bad';
+        elOverallText.textContent = 'connection error';
+      })
+      .finally(function(){
+        state.inFlight = false;
+        state.countdown = POLL_MS / 1000;
+      });
+  }
+
+  // countdown / clock ticking
+  setInterval(function(){
+    tickClock();
+    state.countdown -= 1;
+    if(state.countdown <= 0){
+      elCountdown.textContent = '0';
+      runCheck();
+    }else{
+      elCountdown.textContent = state.countdown;
+    }
+  }, 1000);
+
+  // initial paint
+  renderCards([]);
+  tickClock();
+  runCheck();
+})();
+</script>
+</body>
+</html>

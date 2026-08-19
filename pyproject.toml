@@ -1,0 +1,18 @@
+[project]
+name = "monitor"
+version = "0.0.1"
+description = "Monitoring application"
+requires-python = ">=3.14"
+dependencies = [
+    "aiohttp>=3.14.3",
+    "fastapi>=0.141.1",
+    "jinja2>=3.1.6",
+    "requests>=2.34.2",
+    "uvicorn>=0.52.3",
+]
+
+
+[dependency-groups]
+dev = [
+    "turboapi>=1.0.32",
+]
